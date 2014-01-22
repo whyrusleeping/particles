@@ -1,5 +1,9 @@
 package main
 
+import (
+	"github.com/samuel/go-opencl/cl"
+)
+
 var kernel = `
 typedef struct Particle {
 	double vX, vY, vZ;
@@ -24,3 +28,7 @@ __kernel void updatepart(__global Particle *ps) {
 		ps[i].vZ += dz * acc;
 	}
 	`
+
+func StartupCL() {
+	platforms, err := cl.GetPlatforms()
+}

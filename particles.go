@@ -91,8 +91,8 @@ func RandCoord3(rng float64) Coord3 {
 func RandParticle() *Particle {
 	p := new(Particle)
 	p.Loc = RandCoord3(50)
-	p.Mass = 1
-	p.Vel = RandCoord3(0.5)
+	p.Mass = RandRange(5)
+	p.Vel = RandCoord3(1.5)
 	return p
 }
 
@@ -155,9 +155,11 @@ func (s *Simulation) UpdateRoutine(beg, end int) {
 
 func (w *Simulation) UpdateParticles() {
 	//Velocities can be updated asynchronously
+	/*/
 	for i := 0; i < w.nThreads; i++ {
 		w.ucBegin<-true
 	}
+	//*/
 	for i := 0; i < w.nThreads; i++ {
 		<-w.ucDone
 	}
@@ -166,6 +168,9 @@ func (w *Simulation) UpdateParticles() {
 	}
 	for i := 0; i < w.nThreads; i++ {
 		<-w.ucPosDone
+	}
+	for i := 0; i < w.nThreads; i++ {
+		w.ucBegin<-true
 	}
 }
 
@@ -184,7 +189,7 @@ func (w *Simulation) DrawParticles() {
 }
 
 func FpsTicker(tick chan bool) {
-	frames := 0
+	frames := float64(0)
 	gran := 5
 	timer := time.Tick(time.Second * time.Duration(gran))
 	for {
@@ -192,7 +197,7 @@ func FpsTicker(tick chan bool) {
 			case <-tick:
 				frames++
 			case <-timer:
-				fmt.Printf("%f fps.\n", float64(frames) / float64(gran))
+				fmt.Printf("%f fps.\n", frames/float64(gran))
 				frames = 0
 		}
 	}
@@ -246,6 +251,10 @@ func (w *Simulation) Run() {
 	}
 
 	w.screen.SetTitle("Awesome Simulation Title Here")
+
+	for i := 0; i < w.nThreads; i++ {
+		w.ucBegin <- true
+	}
 
 	w.running = true
 	tick := make(chan bool)
