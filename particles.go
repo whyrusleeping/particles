@@ -10,6 +10,10 @@ import (
 	"image/color"
 )
 
+var SpawnRange float64 = 50
+var SpawnVel float64 = 1.5
+var SpawnMass float64 = 5
+
 type Coord3 struct {
 	X,Y,Z float64
 }
@@ -18,6 +22,10 @@ func (c Coord3) Add(o Coord3) Coord3 {
 	return Coord3{c.X + o.X,
 				  c.Y + o.Y,
 				  c.Z + o.Z}
+}
+
+func (c Coord3) VecLen() float64 {
+	return math.Sqrt(c.X*c.X+c.Y*c.Y+c.Z*c.Z)
 }
 
 func (c Coord3) Sub(o Coord3) Coord3 {
@@ -90,9 +98,9 @@ func RandCoord3(rng float64) Coord3 {
 
 func RandParticle() *Particle {
 	p := new(Particle)
-	p.Loc = RandCoord3(50)
-	p.Mass = RandRange(5)
-	p.Vel = RandCoord3(1.5)
+	p.Loc = RandCoord3(SpawnRange)
+	p.Mass = RandRange(SpawnMass) + SpawnMass
+	p.Vel = RandCoord3(SpawnVel)
 	return p
 }
 
@@ -113,9 +121,14 @@ func NewSim(x,y int, Particles int, Threads int) *Simulation {
 	for i := 0; i < Particles; i++ {
 		w.particles = append(w.particles, RandParticle())
 	}
+	for i := 0; i < 10; i++ {
+		heavy := RandParticle()
+		heavy.Mass = 4000
+		w.particles = append(w.particles, heavy)
+	}
 	w.nThreads = Threads
 
-	w.deltaT = 0.1
+	w.deltaT = 1
 	w.bigG = 3.0
 
 	for i := 0; i < Threads; i++ {
@@ -134,12 +147,13 @@ func (s *Simulation) UpdateRoutine(beg, end int) {
 				if n == j {
 					continue
 				}
-				dist := cur.Loc.Dist(p.Loc)
+				dvec := p.Loc.Sub(cur.Loc)
+				dist := dvec.VecLen()
 				if dist < 0.000001 {
 					dist = 0.000001
 				}
 				acc := s.bigG * p.Mass / (dist * dist)
-				aVec := p.Loc.Sub(cur.Loc).Mul(s.deltaT * acc/dist)
+				aVec := dvec.Mul(s.deltaT * acc/dist)
 				cur.Vel.AddInPlace(aVec)
 			}
 		}
@@ -153,13 +167,11 @@ func (s *Simulation) UpdateRoutine(beg, end int) {
 	}
 }
 
+//This function is organized so that the most intensive calculations 
+//will occur during the previous render cycle, thereby maximizing
+//the amount of wasted time spent waiting
 func (w *Simulation) UpdateParticles() {
 	//Velocities can be updated asynchronously
-	/*/
-	for i := 0; i < w.nThreads; i++ {
-		w.ucBegin<-true
-	}
-	//*/
 	for i := 0; i < w.nThreads; i++ {
 		<-w.ucDone
 	}
@@ -205,7 +217,6 @@ func FpsTicker(tick chan bool) {
 
 func (s *Simulation) HandleKey(ev *sdl.KeyboardEvent) {
 	//fmt.Printf("%d %d\n", ev.State, ev.Keysym.Sym)
-	fmt.Println(sdl.K_PLUS)
 	if ev.State == 1 {
 		switch ev.Keysym.Sym {
 			case sdl.K_w:
