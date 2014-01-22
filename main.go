@@ -13,7 +13,7 @@ var particles = flag.Int("p", 1000, "Number of particles to spawn.")
 
 func main() {
 	flag.Parse()
-	runtime.GOMAXPROCS(6)
+	runtime.GOMAXPROCS(*threads + 1)
 	rand.Seed(time.Now().UnixNano())
 	w := NewSim(800,800,*particles,*threads)
 	w.Run()

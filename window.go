@@ -66,10 +66,17 @@ type Simulation struct {
 	bg color.RGBA
 	events chan sdl.Event
 	screenRect sdl.Rect
-	updateChan chan bool
 	nThreads int
 
+	//Update Sync Channels
+	ucBegin chan bool
+	ucDone chan bool
+	ucPos chan bool
+	ucPosDone chan bool
+
 	oX,oY int
+	deltaT float64
+	bigG float64
 }
 
 func RandRange(rng float64) float64 {
@@ -97,12 +104,21 @@ func NewSim(x,y int, Particles int, Threads int) *Simulation {
 	w.screenRect.X = sdl.Int(x)
 	w.screenRect.Y = sdl.Int(y)
 	w.events = make(chan sdl.Event)
-	w.updateChan = make(chan bool)
+	w.ucBegin = make(chan bool)
+	w.ucDone = make(chan bool)
+	w.ucPos = make(chan bool)
+	w.ucPosDone = make(chan bool)
 	for i := 0; i < Particles; i++ {
 		w.particles = append(w.particles, RandParticle())
 	}
 	w.nThreads = Threads
 
+	w.deltaT = 0.1
+	w.bigG = 3.0
+
+	for i := 0; i < Threads; i++ {
+		go w.UpdateRoutine(i * (len(w.particles) / w.nThreads), (i+1) * (len(w.particles) / w.nThreads))
+	}
 	return w
 }
 
@@ -119,41 +135,47 @@ func (w *Simulation) poolEvents() {
 	}
 }
 
+func (s *Simulation) UpdateRoutine(beg, end int) {
+	fmt.Printf("Range: %d to %d\n", beg, end)
+	for {
+		// a = Gm/r^2
+		<-s.ucBegin
+		for n,cur := range s.particles[beg:end] {
+			for j,p := range s.particles {
+				if n == j {
+					continue
+				}
+				dist := cur.Loc.Dist(p.Loc)
+				if dist < 0.000001 {
+					dist = 0.000001
+				}
+				acc := s.bigG * p.Mass / (dist * dist)
+				aVec := p.Loc.Sub(cur.Loc).Mul(acc/dist)
+				cur.Vel.AddInPlace(aVec.Mul(s.deltaT))
+			}
+		}
+		s.ucDone <- true
+		<-s.ucPos
+		for _,p := range s.particles[beg:end] {
+			p.Loc.AddInPlace(p.Vel.Mul(s.deltaT))
+		}
+		s.ucPosDone <- true
+	}
+}
+
 func (w *Simulation) UpdateParticles() {
-	deltaT := 0.1
-	bigG := 3.0
 	//Velocities can be updated asynchronously
 	for i := 0; i < w.nThreads; i++ {
-		fmt.Println("Call")
-		go func(beg, end int) {
-			fmt.Printf("Range: %d to %d\n", beg, end)
-			// a = Gm/r^2
-			for n,cur := range w.particles[beg:end] {
-				for j,p := range w.particles {
-					if n == j {
-						continue
-					}
-					dist := cur.Loc.Dist(p.Loc)
-					if dist == 0 {
-						dist = 0.000001
-					}
-					acc := bigG * p.Mass / (dist * dist)
-					aVec := p.Loc.Sub(cur.Loc).Mul(acc/dist)
-					cur.Vel.AddInPlace(aVec.Mul(deltaT))
-				}
-			}
-			fmt.Println("Done!")
-			w.updateChan <- true
-		}(i * (len(w.particles) / w.nThreads), (i+1) * (len(w.particles) / w.nThreads))
+		w.ucBegin<-true
 	}
-
 	for i := 0; i < w.nThreads; i++ {
-		<-w.updateChan
+		<-w.ucDone
 	}
-
-	fmt.Println("Mod velocities.")
-	for _,v := range w.particles {
-		v.Loc.AddInPlace(v.Vel.Mul(deltaT))
+	for i := 0; i < w.nThreads; i++ {
+		w.ucPos<-true
+	}
+	for i := 0; i < w.nThreads; i++ {
+		<-w.ucPosDone
 	}
 }
 
@@ -169,6 +191,21 @@ func (w *Simulation) DrawParticles() {
 	}
 	//Put all this on the screen now
 	w.screen.Present()
+}
+
+func FpsTicker(tick chan bool) {
+	frames := 0
+	gran := 5
+	timer := time.Tick(time.Second * time.Duration(gran))
+	for {
+		select {
+			case <-tick:
+				frames++
+			case <-timer:
+				fmt.Printf("%f fps.\n", float64(frames) / float64(gran))
+				frames = 0
+		}
+	}
 }
 
 func (w *Simulation) Run() {
@@ -195,6 +232,8 @@ func (w *Simulation) Run() {
 
 	w.running = true
 	go w.poolEvents()
+	tick := make(chan bool)
+	go FpsTicker(tick)
 	for {
 		select {
 		case ev := <-w.events:
@@ -208,5 +247,6 @@ func (w *Simulation) Run() {
 		}
 		w.UpdateParticles()
 		w.DrawParticles()
+		tick <- true
 	}
 }
