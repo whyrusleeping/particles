@@ -75,6 +75,7 @@ type Simulation struct {
 	ucPosDone chan bool
 
 	oX,oY int
+	scale float64
 	deltaT float64
 	bigG float64
 }
@@ -101,6 +102,7 @@ func NewSim(x,y int, Particles int, Threads int) *Simulation {
 	w.Y = y
 	w.oX = x / 2
 	w.oY = y / 2
+	w.scale = 1
 	w.screenRect.X = sdl.Int(x)
 	w.screenRect.Y = sdl.Int(y)
 	w.events = make(chan sdl.Event)
@@ -122,23 +124,10 @@ func NewSim(x,y int, Particles int, Threads int) *Simulation {
 	return w
 }
 
-//sdl.PollEvent does not block normally, and that would make it difficult
-//to integrate it into our flow, so here we loop and collect events into
-//a channel
-func (w *Simulation) poolEvents() {
-	for w.running {
-		ev := sdl.PollEvent()
-		if ev != nil {
-			w.events <- ev
-		}
-		time.Sleep(time.Second / 2)
-	}
-}
-
+//A single thread for updating particle velocity/location in parallel
 func (s *Simulation) UpdateRoutine(beg, end int) {
 	fmt.Printf("Range: %d to %d\n", beg, end)
 	for {
-		// a = Gm/r^2
 		<-s.ucBegin
 		for n,cur := range s.particles[beg:end] {
 			for j,p := range s.particles {
@@ -150,11 +139,12 @@ func (s *Simulation) UpdateRoutine(beg, end int) {
 					dist = 0.000001
 				}
 				acc := s.bigG * p.Mass / (dist * dist)
-				aVec := p.Loc.Sub(cur.Loc).Mul(acc/dist)
-				cur.Vel.AddInPlace(aVec.Mul(s.deltaT))
+				aVec := p.Loc.Sub(cur.Loc).Mul(s.deltaT * acc/dist)
+				cur.Vel.AddInPlace(aVec)
 			}
 		}
 		s.ucDone <- true
+		//Once all velocities have been updated, update location
 		<-s.ucPos
 		for _,p := range s.particles[beg:end] {
 			p.Loc.AddInPlace(p.Vel.Mul(s.deltaT))
@@ -186,7 +176,7 @@ func (w *Simulation) DrawParticles() {
 	w.screen.DrawRect(w.screenRect)
 	w.screen.Clear()
 	for i := 0; i < len(w.particles); i++ {
-		w.screen.DrawPoint(int(w.particles[i].Loc.X) + w.oX,int(w.particles[i].Loc.Y) + w.oY)
+		w.screen.DrawPoint(int(w.particles[i].Loc.X / w.scale) + w.oX,int(w.particles[i].Loc.Y / w.scale) + w.oY)
 		w.screen.SetDrawColor(w.particles[i].Color)
 	}
 	//Put all this on the screen now
@@ -204,6 +194,33 @@ func FpsTicker(tick chan bool) {
 			case <-timer:
 				fmt.Printf("%f fps.\n", float64(frames) / float64(gran))
 				frames = 0
+		}
+	}
+}
+
+func (s *Simulation) HandleKey(ev *sdl.KeyboardEvent) {
+	//fmt.Printf("%d %d\n", ev.State, ev.Keysym.Sym)
+	fmt.Println(sdl.K_PLUS)
+	if ev.State == 1 {
+		switch ev.Keysym.Sym {
+			case sdl.K_w:
+				fmt.Println("Move up.")
+				s.oY += 10
+			case sdl.K_a:
+				fmt.Println("Move left.")
+				s.oX += 10
+			case sdl.K_s:
+				fmt.Println("Move down.")
+				s.oY -= 10
+			case sdl.K_d:
+				fmt.Println("Move right.")
+				s.oX -= 10
+			case sdl.K_j:
+				fmt.Println("Zoom in!")
+				s.scale /= 1.1
+			case sdl.K_k:
+				fmt.Println("Zoom out!")
+				s.scale *= 1.1
 		}
 	}
 }
@@ -231,19 +248,17 @@ func (w *Simulation) Run() {
 	w.screen.SetTitle("Awesome Simulation Title Here")
 
 	w.running = true
-	go w.poolEvents()
 	tick := make(chan bool)
 	go FpsTicker(tick)
 	for {
-		select {
-		case ev := <-w.events:
-			switch ev.(type) {
+		for ev := sdl.PollEvent(); ev != nil; ev = sdl.PollEvent() {
+			switch ev := ev.(type) {
 			case *sdl.QuitEvent:
 				w.running = false
 				return
+			case *sdl.KeyboardEvent:
+				w.HandleKey(ev)
 			}
-			default:
-				break
 		}
 		w.UpdateParticles()
 		w.DrawParticles()
