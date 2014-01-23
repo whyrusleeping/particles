@@ -48,6 +48,16 @@ func (c *Coord3) Wrap(dist float64) {
 	}
 }
 
+func (c *Coord3) Cap(max float64) {
+	v := c.VecLen()
+	if v > max {
+		r := max / v
+		c.X *= r
+		c.Y *= r
+		c.Z *= r
+	}
+}
+
 func (c Coord3) Sub(o Coord3) Coord3 {
 	return Coord3{c.X - o.X, c.Y - o.Y, c.Z - o.Z}
 }
@@ -145,7 +155,7 @@ func NewSim(x,y int, Particles int, Threads int) *Simulation {
 	w.events = make(chan sdl.Event)
 	for i := 0; i < 1; i++ {
 		heavy := RandParticle()
-		heavy.Mass = 50000
+		heavy.Mass = 500000
 		heavy.Vel = Coord3{}
 		w.particles = append(w.particles, heavy)
 	}
@@ -226,6 +236,7 @@ func (s *Simulation) UpdateRoutineAdv(beg, end int) {
 		//Once all velocities have been updated, update location
 		s.wgPos.Add(1)
 		for _,p := range s.particles[beg:end] {
+			p.Vel.Cap(300)
 			p.Loc.AddInPlace(p.Vel.Mul(s.deltaT))
 			//p.Loc.Wrap(1000)
 		}
