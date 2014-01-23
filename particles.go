@@ -27,6 +27,27 @@ func (c Coord3) VecLen() float64 {
 	return math.Sqrt(c.X*c.X+c.Y*c.Y+c.Z*c.Z)
 }
 
+func (c *Coord3) Wrap(dist float64) {
+	if c.X > dist {
+		c.X -= 2*dist
+	}
+	if c.X * -1 > dist {
+		c.X += 2*dist
+	}
+	if c.Y > dist {
+		c.Y -= 2*dist
+	}
+	if c.Y * -1 > dist {
+		c.Y += 2*dist
+	}
+	if c.Z > dist {
+		c.Z -= 2*dist
+	}
+	if c.Z * -1 > dist {
+		c.Z += 2*dist
+	}
+}
+
 func (c Coord3) Sub(o Coord3) Coord3 {
 	return Coord3{c.X - o.X, c.Y - o.Y, c.Z - o.Z}
 }
@@ -122,13 +143,14 @@ func NewSim(x,y int, Particles int, Threads int) *Simulation {
 	w.screenRect.X = sdl.Int(x)
 	w.screenRect.Y = sdl.Int(y)
 	w.events = make(chan sdl.Event)
+	for i := 0; i < 1; i++ {
+		heavy := RandParticle()
+		heavy.Mass = 50000
+		heavy.Vel = Coord3{}
+		w.particles = append(w.particles, heavy)
+	}
 	for i := 0; i < Particles; i++ {
 		w.particles = append(w.particles, RandParticle())
-	}
-	for i := 0; i < 10; i++ {
-		heavy := RandParticle()
-		heavy.Mass = 10000
-		w.particles = append(w.particles, heavy)
 	}
 	w.nThreads = Threads
 	w.start = make(chan struct{})
@@ -205,6 +227,7 @@ func (s *Simulation) UpdateRoutineAdv(beg, end int) {
 		s.wgPos.Add(1)
 		for _,p := range s.particles[beg:end] {
 			p.Loc.AddInPlace(p.Vel.Mul(s.deltaT))
+			//p.Loc.Wrap(1000)
 		}
 		s.wgPos.Done()
 	}
