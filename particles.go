@@ -60,6 +60,22 @@ type Particle struct {
 	Color color.RGBA
 }
 
+func (p *Particle) Collide(o *Particle) {
+	mom := p.Vel.Mul(p.Mass)
+	mom.AddInPlace(o.Vel.Mul(o.Mass))
+	mom = mom.Div(2)
+	p.Vel = mom.Div(p.Mass)
+	o.Vel = mom.Div(o.Mass)
+/* More correct, doesnt work
+	mom := p.Vel.Mul(p.Mass)
+	mom.AddInPlace(o.Vel.Mul(o.Mass))
+	msum := p.Mass + o.Mass
+	mom = mom.Div(msum)
+	p.Vel = mom.Mul(p.Mass)
+	o.Vel = mom.Mul(o.Mass)
+	*/
+}
+
 type Simulation struct {
 	particles []*Particle
 	running bool
@@ -117,11 +133,11 @@ func NewSim(x,y int, Particles int, Threads int) *Simulation {
 	w.nThreads = Threads
 	w.start = make(chan struct{})
 
-	w.deltaT = 1
+	w.deltaT = 0.1
 	w.bigG = 3.0
 
 	for i := 0; i < Threads; i++ {
-		go w.UpdateRoutine(i * (len(w.particles) / w.nThreads), (i+1) * (len(w.particles) / w.nThreads))
+		go w.UpdateRoutineAdv(i * (len(w.particles) / w.nThreads), (i+1) * (len(w.particles) / w.nThreads))
 	}
 	return w
 }
@@ -141,6 +157,41 @@ func (s *Simulation) UpdateRoutine(beg, end int) {
 				dist := dvec.VecLen()
 				if dist < 0.000001 {
 					dist = 0.000001
+				}
+				acc := s.bigG * p.Mass / (dist * dist)
+				aVec := dvec.Mul(s.deltaT * acc/dist)
+				cur.Vel.AddInPlace(aVec)
+			}
+		}
+		s.wgAcc.Done()
+		s.wgAcc.Wait()
+
+		//Once all velocities have been updated, update location
+		s.wgPos.Add(1)
+		for _,p := range s.particles[beg:end] {
+			p.Loc.AddInPlace(p.Vel.Mul(s.deltaT))
+		}
+		s.wgPos.Done()
+	}
+}
+
+//A more advanced particle updater that takes collisions into account
+func (s *Simulation) UpdateRoutineAdv(beg, end int) {
+	fmt.Printf("Range: %d to %d\n", beg, end)
+	for {
+		<-s.start
+		s.wgAcc.Add(1)
+		for n,cur := range s.particles[beg:end] {
+			for j,p := range s.particles {
+				if n == j {
+					continue
+				}
+				dvec := p.Loc.Sub(cur.Loc)
+				dist := dvec.VecLen()
+				if dist < 1 {
+					//Collision
+					cur.Collide(p)
+					continue
 				}
 				acc := s.bigG * p.Mass / (dist * dist)
 				aVec := dvec.Mul(s.deltaT * acc/dist)
@@ -256,6 +307,7 @@ func (w *Simulation) Run() {
 	w.running = true
 	tick := make(chan bool)
 	go FpsTicker(tick)
+	drag := false
 	for {
 		for ev := sdl.PollEvent(); ev != nil; ev = sdl.PollEvent() {
 			switch ev := ev.(type) {
@@ -264,6 +316,21 @@ func (w *Simulation) Run() {
 				return
 			case *sdl.KeyboardEvent:
 				w.HandleKey(ev)
+			case *sdl.MouseButtonEvent:
+				if ev.Button == 1 {
+					drag = !drag
+					fmt.Println(drag)
+				}
+				fmt.Println(ev.Button)
+			case *sdl.MouseMotionEvent:
+				if drag {
+					w.oX += ev.Xrel
+					w.oY += ev.Yrel
+				}
+			case *sdl.MouseWheelEvent:
+				fmt.Println("Wheeel...")
+			default:
+				fmt.Println("Uncaught event!")
 			}
 		}
 		w.UpdateParticles()
