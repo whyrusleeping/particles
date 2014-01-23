@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"time"
 	"image/color"
+	"sync"
 )
 
 var SpawnRange float64 = 50
@@ -19,9 +20,7 @@ type Coord3 struct {
 }
 
 func (c Coord3) Add(o Coord3) Coord3 {
-	return Coord3{c.X + o.X,
-				  c.Y + o.Y,
-				  c.Z + o.Z}
+	return Coord3{c.X + o.X, c.Y + o.Y, c.Z + o.Z}
 }
 
 func (c Coord3) VecLen() float64 {
@@ -29,9 +28,7 @@ func (c Coord3) VecLen() float64 {
 }
 
 func (c Coord3) Sub(o Coord3) Coord3 {
-	return Coord3{c.X - o.X,
-				  c.Y - o.Y,
-				  c.Z - o.Z}
+	return Coord3{c.X - o.X, c.Y - o.Y, c.Z - o.Z}
 }
 
 func (c *Coord3) AddInPlace(o Coord3) {
@@ -41,18 +38,15 @@ func (c *Coord3) AddInPlace(o Coord3) {
 }
 
 func (c Coord3) Mul(v float64) Coord3 {
-	return Coord3{c.X * v,
-				  c.Y * v,
-				  c.Z * v}
+	return Coord3{c.X * v, c.Y * v, c.Z * v}
 }
 
 func (c Coord3) Div(v float64) Coord3 {
-	return Coord3{c.X / v,
-				  c.Y / v,
-				  c.Z / v}
+	return Coord3{c.X / v, c.Y / v, c.Z / v}
 }
 
 func (c Coord3) Dist(o Coord3) float64 {
+	fmt.Println("Use sub and VecLen instead.")
 	return math.Sqrt(math.Pow(c.X - o.X,2) +
 					 math.Pow(c.Y - o.Y,2) +
 					 math.Pow(c.Z - o.Z,2))
@@ -76,11 +70,9 @@ type Simulation struct {
 	screenRect sdl.Rect
 	nThreads int
 
-	//Update Sync Channels
-	ucBegin chan bool
-	ucDone chan bool
-	ucPos chan bool
-	ucPosDone chan bool
+	start chan struct{}
+	wgAcc sync.WaitGroup
+	wgPos sync.WaitGroup
 
 	oX,oY int
 	scale float64
@@ -114,19 +106,16 @@ func NewSim(x,y int, Particles int, Threads int) *Simulation {
 	w.screenRect.X = sdl.Int(x)
 	w.screenRect.Y = sdl.Int(y)
 	w.events = make(chan sdl.Event)
-	w.ucBegin = make(chan bool)
-	w.ucDone = make(chan bool)
-	w.ucPos = make(chan bool)
-	w.ucPosDone = make(chan bool)
 	for i := 0; i < Particles; i++ {
 		w.particles = append(w.particles, RandParticle())
 	}
 	for i := 0; i < 10; i++ {
 		heavy := RandParticle()
-		heavy.Mass = 4000
+		heavy.Mass = 10000
 		w.particles = append(w.particles, heavy)
 	}
 	w.nThreads = Threads
+	w.start = make(chan struct{})
 
 	w.deltaT = 1
 	w.bigG = 3.0
@@ -141,7 +130,8 @@ func NewSim(x,y int, Particles int, Threads int) *Simulation {
 func (s *Simulation) UpdateRoutine(beg, end int) {
 	fmt.Printf("Range: %d to %d\n", beg, end)
 	for {
-		<-s.ucBegin
+		<-s.start
+		s.wgAcc.Add(1)
 		for n,cur := range s.particles[beg:end] {
 			for j,p := range s.particles {
 				if n == j {
@@ -157,13 +147,15 @@ func (s *Simulation) UpdateRoutine(beg, end int) {
 				cur.Vel.AddInPlace(aVec)
 			}
 		}
-		s.ucDone <- true
+		s.wgAcc.Done()
+		s.wgAcc.Wait()
+
 		//Once all velocities have been updated, update location
-		<-s.ucPos
+		s.wgPos.Add(1)
 		for _,p := range s.particles[beg:end] {
 			p.Loc.AddInPlace(p.Vel.Mul(s.deltaT))
 		}
-		s.ucPosDone <- true
+		s.wgPos.Done()
 	}
 }
 
@@ -172,17 +164,10 @@ func (s *Simulation) UpdateRoutine(beg, end int) {
 //the amount of wasted time spent waiting
 func (w *Simulation) UpdateParticles() {
 	//Velocities can be updated asynchronously
+	w.wgAcc.Wait()
+	w.wgPos.Wait()
 	for i := 0; i < w.nThreads; i++ {
-		<-w.ucDone
-	}
-	for i := 0; i < w.nThreads; i++ {
-		w.ucPos<-true
-	}
-	for i := 0; i < w.nThreads; i++ {
-		<-w.ucPosDone
-	}
-	for i := 0; i < w.nThreads; i++ {
-		w.ucBegin<-true
+		w.start <- struct{}{}
 	}
 }
 
@@ -263,8 +248,9 @@ func (w *Simulation) Run() {
 
 	w.screen.SetTitle("Awesome Simulation Title Here")
 
+
 	for i := 0; i < w.nThreads; i++ {
-		w.ucBegin <- true
+		w.start <-struct{}{}
 	}
 
 	w.running = true
