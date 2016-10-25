@@ -11,9 +11,19 @@ import (
 	"time"
 )
 
-var SpawnRange float64 = 50
-var SpawnVel float64 = 1.5
-var SpawnMass float64 = 5
+var (
+	SpawnRange float64 = 50
+
+	SpawnVel float64 = 1.5
+
+	SpawnMass float64 = 5
+
+	MinDistance = 0.00001
+
+	BodyMass float64 = 5000
+
+	doBackWarp = false
+)
 
 type Coord3 struct {
 	X, Y, Z float64
@@ -161,8 +171,9 @@ func NewSim(x, y int32, Particles int, Threads int) *Simulation {
 	w.events = make(chan sdl.Event)
 	for i := 0; i < 1; i++ {
 		heavy := RandParticle()
-		heavy.Mass = 500000
-		heavy.Vel = Coord3{}
+		heavy.Mass = BodyMass
+		heavy.Color = 0xff8888
+		//heavy.Vel = Coord3{}
 		w.particles = append(w.particles, heavy)
 	}
 	for i := 0; i < Particles; i++ {
@@ -193,8 +204,8 @@ func (s *Simulation) UpdateRoutine(beg, end int) {
 				}
 				dvec := p.Loc.Sub(cur.Loc)
 				dist := dvec.VecLen()
-				if dist < 0.000001 {
-					dist = 0.000001
+				if dist < MinDistance {
+					dist = MinDistance
 				}
 				acc := s.bigG * p.Mass / (dist * dist)
 				aVec := dvec.Mul(s.deltaT * acc / dist)
@@ -225,7 +236,7 @@ func (s *Simulation) UpdateRoutineAdv(beg, end int) {
 				}
 				dvec := p.Loc.Sub(cur.Loc)
 				dist := dvec.VecLen()
-				if dist < 1 {
+				if dist < 1.2 {
 					//Collision
 					cur.Collide(p)
 					continue
@@ -242,6 +253,12 @@ func (s *Simulation) UpdateRoutineAdv(beg, end int) {
 			p.Vel.Cap(300)
 			p.Loc.AddInPlace(p.Vel.Mul(s.deltaT))
 			//p.Loc.Wrap(1000)
+			if doBackWarp && p.Loc.VecLen() > 10000 {
+				p.Loc.X = (rand.Float64() * 1000) - 500
+				p.Loc.Y = (rand.Float64() * 1000) - 500
+				p.Loc.Z = (rand.Float64() * 1000) - 500
+				p.Vel.Cap(20)
+			}
 		}
 		s.wgPos.Done()
 	}
